@@ -3,143 +3,137 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lähellä.fi - Tapahtumavahti V3</title>
+    <title>Lähellä.fi - Tapahtumavahti V5 (Lite)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
-        body { font-family: sans-serif; margin: 20px; background-color: #f0f2f5; }
+        body { font-family: sans-serif; margin: 20px; background-color: #f8f9fa; color: #333; }
         .container { max-width: 1400px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        .controls { background: #fff; padding: 20px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .status { width: 100%; font-weight: bold; color: #d9534f; margin-bottom: 10px; padding: 10px; background: #f9f9f9; border-left: 5px solid #0056b3; color: #333; }
+        .controls { background: #e9ecef; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: flex-end; gap: 15px; flex-wrap: wrap; }
+        .status { width: 100%; font-weight: bold; margin-bottom: 10px; padding: 10px; background: #fff; border-left: 5px solid #28a745; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th, td { border: 1px solid #eee; padding: 12px; text-align: left; }
-        th { background-color: #0056b3; color: white; position: sticky; top: 0; }
-        tr:nth-child(even) { background-color: #fcfcfc; }
-        button { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
-        button:disabled { background: #ccc; }
-        .btn-names { background: #f0ad4e; }
-        .btn-excel { background: #007bff; }
-        select { padding: 10px; border-radius: 6px; border: 1px solid #ccc; }
+        th, td { border: 1px solid #dee2e6; padding: 12px; text-align: left; }
+        th { background-color: #343a40; color: white; position: sticky; top: 0; }
+        tr:nth-child(even) { background-color: #f2f2f2; }
+        button { background: #28a745; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; }
+        button:hover { background: #218838; }
+        button.excel { background: #007bff; }
+        input, select { padding: 10px; border-radius: 6px; border: 1px solid #ced4da; background: white; }
+        label { font-weight: bold; display: block; margin-bottom: 5px; font-size: 14px; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>Lähellä.fi - Tapahtumavahti V3</h1>
+    <h1>Lähellä.fi - Tapahtumavahti V5</h1>
     
-    <div id="statusText" class="status">Valmis. Aloita painamalla "Päivitä ilmoitukset".</div>
+    <div id="statusText" class="status">Valmis hakuun.</div>
 
     <div class="controls">
-        <select id="typeFilter">
-            <option value="support">Tuki ja apu</option>
-            <option value="hobby">Harrastukset</option>
-            <option value="voluntary">Vapaaehtoistoiminta</option>
-        </select>
-        <button id="fetchBtn" onclick="fetchActivities()">1. Päivitä ilmoitukset</button>
-        <button id="namesBtn" class="btn-names" onclick="fetchGroupNames()" disabled>2. Hae järjestöjen nimet</button>
-        <button id="exportBtn" class="btn-excel" onclick="exportToExcel()" disabled>3. Lataa Exceliin</button>
+        <div>
+            <label>Kategoria:</label>
+            <select id="typeFilter">
+                <option value="support">Tuki ja apu</option>
+                <option value="hobby">Harrastukset</option>
+                <option value="voluntary">Vapaaehtoistoiminta</option>
+            </select>
+        </div>
+        <div>
+            <label>Päivitetty jälkeen:</label>
+            <input type="date" id="dateFilter">
+        </div>
+        <button onclick="fetchData()">Hae ilmoitukset</button>
+        <button class="excel" onclick="exportToExcel()">Lataa Exceliin</button>
     </div>
 
-    <div style="overflow-x: auto; max-height: 600px; border: 1px solid #ddd;">
+    <div style="overflow-x: auto; max-height: 700px; border: 1px solid #ddd;">
         <table id="dataTable">
             <thead>
                 <tr>
                     <th>Nimi</th>
-                    <th>Järjestäjä (ID/Nimi)</th>
-                    <th>Tapa</th>
+                    <th>Järjestö-ID</th>
+                    <th>Osallistumistapa</th>
                     <th>Postinumerot</th>
                     <th>Kaupunki</th>
                     <th>Linkki</th>
                 </tr>
             </thead>
-            <tbody id="dataBody"></tbody>
+            <tbody id="dataBody">
+                <tr><td colspan="6" style="text-align:center; padding: 20px;">Ei ladattua dataa.</td></tr>
+            </tbody>
         </table>
     </div>
 </div>
 
 <script>
     let allData = [];
-    let groupCache = {};
     const PROXY = "https://corsproxy.io/?";
 
-    async function fetchActivities() {
+    // Oletus: 7 päivää sitten
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    document.getElementById('dateFilter').value = d.toISOString().split('T')[0];
+
+    async function fetchData() {
         const type = document.getElementById('typeFilter').value;
+        const dateVal = document.getElementById('dateFilter').value;
         const status = document.getElementById('statusText');
-        const btn = document.getElementById('fetchBtn');
         
         allData = [];
         document.getElementById('dataBody').innerHTML = "";
-        btn.disabled = true;
         
+        const updatedAfter = dateVal ? new Date(dateVal).toISOString() : "";
         let offset = 0;
         let hasMore = true;
 
         try {
-            while (hasMore && offset < 5000) {
-                status.innerText = `Haetaan ilmoituksia... (Ladattu: ${offset})`;
-                const url = `https://www.lahella.fi/v1/integration/activities?type=${type}&offset=${offset}`;
-                const res = await fetch(PROXY + encodeURIComponent(url));
+            while (hasMore) {
+                status.innerText = `Haetaan... (Ladattu: ${allData.length})`;
+                
+                let apiUrl = `https://www.lahella.fi/v1/integration/activities?type=${type}&offset=${offset}`;
+                if (updatedAfter) {
+                    apiUrl += `&updatedAfter=${encodeURIComponent(updatedAfter)}`;
+                }
+
+                const res = await fetch(PROXY + encodeURIComponent(apiUrl));
+                if (!res.ok) throw new Error("Yhteysvirhe rajapintaan.");
+                
                 const json = await res.json();
                 const items = json.items || [];
 
+                if (items.length === 0) break;
+
                 items.forEach(item => {
                     const traits = item.traits || {};
-                    let types = new Set();
+                    
+                    // Kerätään kanavatiedot
+                    let ways = new Set();
                     let codes = new Set();
                     let cities = new Set();
 
                     (traits.channels || []).forEach(ch => {
-                        if (ch.type) ch.type.forEach(t => types.add(t));
+                        if (ch.type) ch.type.forEach(t => ways.add(t));
                         if (ch.address?.postalCode) codes.add(ch.address.postalCode);
                         if (ch.address?.city) cities.add(ch.address.city);
                     });
 
                     allData.push({
                         "Nimi": traits.name || "Nimetön",
-                        "Järjestäjä": item.group, // Aluksi vain ID
-                        "Tapa": Array.from(types).join(", "),
+                        "Järjestö-ID": item.group,
+                        "Osallistumistapa": Array.from(ways).join(", "),
                         "Postinumerot": Array.from(codes).join(", "),
                         "Kaupunki": Array.from(cities).join(", "),
-                        "Linkki": `https://www.lahella.fi/activities/${item._key}`,
-                        "groupId": item.group
+                        "Linkki": `https://www.lahella.fi/activities/${item._key}`
                     });
                 });
 
                 renderTable();
                 offset += items.length;
-                hasMore = json.hasMore === true && items.length > 0;
+                hasMore = json.hasMore === true && offset < 3000;
             }
-            status.innerText = `Lataus valmis! Mukana ${allData.length} ilmoitusta. Voit nyt hakea nimet tai ladata Excelin.`;
-            document.getElementById('namesBtn').disabled = false;
-            document.getElementById('exportBtn').disabled = false;
+            status.innerText = `Haku valmis! Löytyi ${allData.length} ilmoitusta.`;
         } catch (e) {
-            status.innerText = "Virhe: " + e.message + ". Kokeile päivittää sivu.";
-        } finally { btn.disabled = false; }
-    }
-
-    async function fetchGroupNames() {
-        const status = document.getElementById('statusText');
-        const btn = document.getElementById('namesBtn');
-        btn.disabled = true;
-
-        const uniqueGroups = [...new Set(allData.map(d => d.groupId))];
-        let count = 0;
-
-        for (let id of uniqueGroups) {
-            if (id && !groupCache[id]) {
-                try {
-                    status.innerText = `Haetaan nimiä... (${count++} / ${uniqueGroups.length})`;
-                    const url = `https://www.lahella.fi/v1/integration/groups/${id}`;
-                    const res = await fetch(PROXY + encodeURIComponent(url));
-                    const json = await res.json();
-                    groupCache[id] = json.name || id;
-                } catch (e) { groupCache[id] = id; }
-            }
+            status.innerText = "Virhe: " + e.message;
         }
-
-        allData.forEach(d => { if (groupCache[d.groupId]) d["Järjestäjä"] = groupCache[d.groupId]; });
-        renderTable();
-        status.innerText = "Nimet haettu onnistuneesti!";
-        btn.disabled = false;
     }
 
     function renderTable() {
@@ -147,20 +141,21 @@
         body.innerHTML = allData.map(d => `
             <tr>
                 <td><b>${d["Nimi"]}</b></td>
-                <td>${d["Järjestäjä"]}</td>
-                <td>${d["Tapa"]}</td>
+                <td><code>${d["Järjestö-ID"]}</code></td>
+                <td>${d["Osallistumistapa"]}</td>
                 <td>${d["Postinumerot"]}</td>
                 <td>${d["Kaupunki"]}</td>
-                <td><a href="${d["Linkki"]}" target="_blank">Avaa</a></td>
+                <td><a href="${d["Linkki"]}" target="_blank">Avaa 🔗</a></td>
             </tr>
         `).join('');
     }
 
     function exportToExcel() {
+        if (allData.length === 0) return alert("Hae data ensin!");
         const ws = XLSX.utils.json_to_sheet(allData);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Data");
-        XLSX.writeFile(wb, "Lahella_Data.xlsx");
+        XLSX.utils.book_append_sheet(wb, ws, "Lähellä_Data");
+        XLSX.writeFile(wb, `Lahella_haku_${new Date().toISOString().split('T')[0]}.xlsx`);
     }
 </script>
 </body>
