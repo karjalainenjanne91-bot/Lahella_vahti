@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lähellä.fi - Tapahtumavahti PRO</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; margin: 20px; background-color: #f8f9fa; }
+        .container { max-width: 1400px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .controls { background: #e9ecef; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .status { width: 100%; font-weight: bold; color: #0056b3; margin-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { border: 1px solid #dee2e6; padding: 10px; text-align: left; }
+        th { background-color: #0056b3; color: white; position: sticky; top: 0; }
+        tr:hover { background-color: #f1f1f1; }
+        button { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button.secondary { background: #007bff; }
+        select { padding: 10px; border-radius: 6px; border: 1px solid #ccc; }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Lähellä.fi - Tapahtumavahti</h1>
+    
+    <div class="controls">
+        <div id="statusText" class="status">Valmis hakuun.</div>
+        <select id="typeFilter">
+            <option value="support">Tuki ja apu</option>
+            <option value="hobby">Harrastukset</option>
+            <option value="voluntary">Vapaaehtoistoiminta</option>
+        </select>
+        <button id="fetchBtn" onclick="startFetch()">Päivitä data</button>
+        <button class="secondary" id="exportBtn" onclick="exportToExcel()" disabled>Lataa Exceliin</button>
+    </div>
+
+    <div style="overflow-x: auto; max-height: 750px;">
+        <table id="dataTable">
+            <thead>
+                <tr>
+                    <th>Nimi</th>
+                    <th>Järjestäjä</th>
+                    <th>Osallistumistapa</th>
+                    <th>Postinumerot</th>
+                    <th>Kaupunki</th>
+                    <th>Teemat</th>
+                    <th>Linkki</th>
+                </tr>
+            </thead>
+            <tbody id="dataBody">
+                <tr><td colspan="7" style="text-align:center;">Ei dataa.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let allData = [];
+    let groupCache = {}; 
+
+    // Suomennokset kanavatyypeille
+    const channelTranslations = { "place": "Paikka", "phone": "Puhelin", "online": "Verkko" };
+
+    async function startFetch() {
+        const type = document.getElementById('typeFilter').value;
+        const statusText = document.getElementById('statusText');
+        const fetchBtn = document.getElementById('fetchBtn');
+        const dataBody = document.getElementById('dataBody');
+        
+        allData = [];
+        dataBody.innerHTML = "";
+        fetchBtn.disabled = true;
+        
+        let offset = 0;
+        let hasMore = true;
+
+        try {
+            while (hasMore) {
+                statusText.innerHTML = `<span class="loader"></span> Haetaan (Kohta: ${offset})...`;
+                const response = await fetch(`https://www.lahella.fi/v1/integration/activities?type=${type}&offset=${offset}`);
+                const json = await response.json();
+                const items = json.items || [];
+
+                for (let item of items) {
+                    const traits = item.traits || {};
+                    const channels = traits.channels || [];
+                    
+                    // 1. Käydään läpi kaikki kanavat (channels)
+                    let typesFound = new Set();
+                    let postalcodesFound = new Set();
+                    let citiesFound = new Set();
+
+                    channels.forEach(ch => {
+                        // Kerätään tyypit (place, phone, online)
+                        if (ch.type && Array.isArray(ch.type)) {
+                            ch.type.forEach(t => typesFound.add(channelTranslations[t] || t));
+                        }
+                        
+                        // Jos kyseessä on paikka, poimitaan postinumero ja kaupunki
+                        if (ch.address) {
+                            if (ch.address.postalCode) postalcodesFound.add(ch.address.postalCode);
+                            if (ch.address.city) citiesFound.add(ch.address.city);
+                        }
+                    });
+
+                    // 2. Järjestäjän nimen haku
+                    const groupId = item.group;
+                    if (groupId && !groupCache[groupId]) {
+                        try {
+                            const gRes = await fetch(`https://www.lahella.fi/v1/integration/groups/${groupId}`);
+                            const gJson = await gRes.json();
+                            groupCache[groupId] = gJson.name || "Nimetön";
+                        } catch (e) { groupCache[groupId] = groupId; }
+                    }
+
+                    const row = {
+                        "Nimi": traits.name || "Nimetön",
+                        "Järjestäjä": groupCache[groupId] || groupId,
+                        "Osallistumistapa": Array.from(typesFound).join(", "),
+                        "Postinumerot": Array.from(postalcodesFound).join(", "),
+                        "Kaupunki": Array.from(citiesFound).join(", "),
+                        "Teemat": (traits.theme || []).join(", "),
+                        "Linkki": `https://www.lahella.fi/activities/${item._key}`
+                    };
+                    
+                    allData.push(row);
+                    renderRow(row);
+                }
+
+                offset += items.length;
+                hasMore = json.hasMore === true && offset < 10000;
+                await new Promise(r => setTimeout(r, 50)); // Pieni huili selaimelle
+            }
+            statusText.innerText = `Haku valmis! Ladattu ${allData.length} riviä.`;
+            document.getElementById('exportBtn').disabled = false;
+        } catch (error) {
+            statusText.innerText = "Virhe: " + error.message;
+        } finally { fetchBtn.disabled = false; }
+    }
+
+    function renderRow(row) {
+        const dataBody = document.getElementById('dataBody');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><b>${row["Nimi"]}</b></td>
+            <td>${row["Järjestäjä"]}</td>
+            <td>${row["Osallistumistapa"]}</td>
+            <td>${row["Postinumerot"]}</td>
+            <td>${row["Kaupunki"]}</td>
+            <td><small>${row["Teemat"]}</small></td>
+            <td><a href="${row["Linkki"]}" target="_blank">🔗 Avaa</a></td>
+        `;
+        dataBody.appendChild(tr);
+    }
+
+    function exportToExcel() {
+        const ws = XLSX.utils.json_to_sheet(allData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Lahella_Datan_Analyysi");
+        XLSX.writeFile(wb, `Lahella_Data_${new Date().toISOString().slice(0,10)}.xlsx`);
+    }
+</script>
+
+</body>
+</html>
