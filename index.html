@@ -3,48 +3,47 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lähellä.fi - Tapahtumavahti V5 (Full)</title>
+    <title>Lähellä.fi - Tapahtumavahti V8</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
-        body { font-family: sans-serif; margin: 20px; background-color: #f8f9fa; color: #333; }
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f7f6; color: #333; }
         .container { max-width: 1400px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         .controls { background: #e9ecef; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: flex-end; gap: 15px; flex-wrap: wrap; }
-        .status { width: 100%; font-weight: bold; margin-bottom: 10px; padding: 10px; background: #fff; border-left: 5px solid #0056b3; box-shadow: inset 0 0 5px rgba(0,0,0,0.05); }
+        .status { width: 100%; font-weight: bold; margin-bottom: 10px; padding: 10px; background: #fff; border-left: 5px solid #28a745; min-height: 20px; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th, td { border: 1px solid #dee2e6; padding: 12px; text-align: left; }
         th { background-color: #343a40; color: white; position: sticky; top: 0; }
         tr:nth-child(even) { background-color: #f2f2f2; }
-        button { background: #28a745; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; }
+        button { background: #28a745; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-weight: bold; }
         button:hover { background: #218838; }
-        button.excel { background: #007bff; }
+        .excel { background: #007bff; }
         button:disabled { background: #ccc; cursor: not-allowed; }
-        input, select { padding: 10px; border-radius: 6px; border: 1px solid #ced4da; background: white; }
+        input, select { padding: 10px; border-radius: 6px; border: 1px solid #ced4da; }
         label { font-weight: bold; display: block; margin-bottom: 5px; font-size: 14px; }
-        code { background: #eee; padding: 2px 4px; border-radius: 4px; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>Lähellä.fi - Tapahtumavahti</h1>
+    <h1>Lähellä.fi - Tapahtumavahti V8</h1>
     
-    <div id="statusText" class="status">Valmis hakuun. Valitse kategoria ja päivämäärä.</div>
+    <div id="statusText" class="status">Valmis hakuun.</div>
 
     <div class="controls">
         <div>
-            <label>Kategoria:</label>
+            <label>Kategoria (traits.type):</label>
             <select id="typeFilter">
-                <option value="support">Tuki ja apu</option>
-                <option value="hobby">Harrastukset</option>
-                <option value="voluntary">Vapaaehtoistoiminta</option>
+                <option value="support">Tuki ja apu (support)</option>
+                <option value="hobby">Harrastukset (hobby)</option>
+                <option value="voluntary">Vapaaehtoistoiminta (voluntary)</option>
             </select>
         </div>
         <div>
-            <label>Luotu tai päivitetty jälkeen:</label>
+            <label>createdOrUpdatedAfter:</label>
             <input type="date" id="dateFilter">
         </div>
-        <button id="fetchBtn" onclick="fetchData()">Hae ilmoitukset</button>
-        <button id="exportBtn" class="excel" onclick="exportToExcel()" disabled>Lataa Exceliin</button>
+        <button id="fetchBtn" onclick="fetchData()">Hae ja Suodata</button>
+        <button id="excelBtn" class="excel" onclick="exportToExcel()" disabled>Lataa Excel</button>
     </div>
 
     <div style="overflow-x: auto; max-height: 700px; border: 1px solid #ddd;">
@@ -53,15 +52,13 @@
                 <tr>
                     <th>Nimi</th>
                     <th>Järjestö-ID</th>
-                    <th>Osallistumistapa</th>
-                    <th>Postinumerot</th>
+                    <th>Kategoria</th>
                     <th>Kaupunki</th>
-                    <th>Päivitetty</th>
                     <th>Linkki</th>
                 </tr>
             </thead>
             <tbody id="dataBody">
-                <tr><td colspan="7" style="text-align:center; padding: 20px;">Ei ladattua dataa.</td></tr>
+                <tr><td colspan="5" style="text-align:center; padding: 20px;">Ei ladattua dataa.</td></tr>
             </tbody>
         </table>
     </div>
@@ -71,91 +68,96 @@
     let allData = [];
     const PROXY = "https://corsproxy.io/?";
 
-    // Asetetaan oletuspäiväksi 7 päivää sitten
-    const d = new Date();
-    d.setDate(d.getDate() - 7);
-    document.getElementById('dateFilter').value = d.toISOString().split('T')[0];
+    // Asetetaan oletuspäiväksi eilinen
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    document.getElementById('dateFilter').value = yesterday.toISOString().split('T')[0];
 
     async function fetchData() {
         const selectedType = document.getElementById('typeFilter').value;
         const dateVal = document.getElementById('dateFilter').value;
         const status = document.getElementById('statusText');
         const btn = document.getElementById('fetchBtn');
-        const exportBtn = document.getElementById('exportBtn');
+        const excelBtn = document.getElementById('excelBtn');
         
         allData = [];
         document.getElementById('dataBody').innerHTML = "";
         btn.disabled = true;
-        exportBtn.disabled = true;
         
-        // Luodaan ISO-muotoinen aikaleima rajapintaa varten
-        const createdOrUpdatedAfter = dateVal ? new Date(dateVal).toISOString() : "";
-        const filterDate = dateVal ? new Date(dateVal) : null;
+        // Luodaan vertailua varten päivämääräobjekti (alkaa klo 00:00)
+        const filterDate = new Date(dateVal);
+        filterDate.setHours(0,0,0,0);
+        
+        // Rajapintaa varten ISO-aika
+        const isoDateForApi = filterDate.toISOString();
         
         let offset = 0;
         let hasMore = true;
+        let totalProcessed = 0;
 
         try {
             while (hasMore) {
-                status.innerText = `Haetaan... (Löytynyt: ${allData.length})`;
+                status.innerText = `Käydään läpi ilmoituksia... (Tarkistettu: ${totalProcessed}, Löydetty: ${allData.length})`;
                 
                 // Rakennetaan kysely käyttäen createdOrUpdatedAfter -parametria
-                let apiUrl = `https://www.lahella.fi/v1/integration/activities?type=${selectedType}&offset=${offset}`;
-                if (createdOrUpdatedAfter) {
-                    apiUrl += `&createdOrUpdatedAfter=${encodeURIComponent(createdOrUpdatedAfter)}`;
-                }
-
+                let apiUrl = `https://www.lahella.fi/v1/integration/activities?type=${selectedType}&offset=${offset}&createdOrUpdatedAfter=${encodeURIComponent(isoDateForApi)}`;
+                
                 const res = await fetch(PROXY + encodeURIComponent(apiUrl));
-                if (!res.ok) throw new Error("Yhteysvirhe Lähellä.fi-palveluun.");
+                if (!res.ok) throw new Error("Yhteysvirhe rajapintaan.");
                 
                 const json = await res.json();
                 const items = json.items || [];
 
                 if (items.length === 0) break;
 
-                for (let item of items) {
+                items.forEach(item => {
+                    totalProcessed++;
                     const traits = item.traits || {};
                     
-                    // Aikaleiman tarkistus (updatedAt tai createdAt)
-                    const itemDate = new Date(item.updatedAt || item.createdAt);
+                    // HAETAAN TYYPPI TÄSMÄLLEEN KUVASI OSOITTAMASTA PAIKASTA
+                    const itemType = traits.type || "";
                     
-                    // Varmistetaan vielä koodissa, ettei mukaan pääse liian vanhaa dataa
-                    if (filterDate && itemDate < filterDate) {
-                        hasMore = false; // Jos törmätään liian vanhaan, lopetetaan haku kokonaan
-                        continue;
+                    // HAETAAN PÄIVÄMÄÄRÄ (Käytetään updatedAt jos löytyy, muuten createdAt)
+                    // Huom: Jos näitä ei ole, koodi ei suodata päivän mukaan pois
+                    const itemDate = new Date(item.updatedAt || item.createdAt || 0);
+
+                    // SELAIMEN PUOLEN TARKISTUS (Sledgehammer-metodi)
+                    // 1. Tyypin täytyy täsmätä (esim. "support" === "support")
+                    // 2. Päivämäärän täytyy olla suurempi tai yhtäsuuri kuin valittu
+                    const typeMatch = (itemType === selectedType);
+                    const dateMatch = (itemDate >= filterDate || !item.updatedAt); 
+
+                    if (typeMatch && dateMatch) {
+                        // Kerätään kaupungit
+                        let cities = new Set();
+                        (traits.channels || []).forEach(ch => {
+                            if (ch.address && ch.address.city) cities.add(ch.address.city);
+                        });
+
+                        allData.push({
+                            "Nimi": traits.name || "Nimetön",
+                            "Järjestö-ID": item.group || "Ei tiedossa",
+                            "Kategoria": itemType,
+                            "Kaupunki": Array.from(cities).join(", "),
+                            "Linkki": `https://www.lahella.fi/activities/${item._key}`
+                        });
                     }
-
-                    let ways = new Set();
-                    let codes = new Set();
-                    let cities = new Set();
-
-                    (traits.channels || []).forEach(ch => {
-                        if (ch.type) ch.type.forEach(t => ways.add(t));
-                        if (ch.address?.postalCode) codes.add(ch.address.postalCode);
-                        if (ch.address?.city) cities.add(ch.address.city);
-                    });
-
-                    allData.push({
-                        "Nimi": traits.name || "Nimetön",
-                        "Järjestö-ID": item.group,
-                        "Osallistumistapa": Array.from(ways).join(", "),
-                        "Postinumerot": Array.from(codes).join(", "),
-                        "Kaupunki": Array.from(cities).join(", "),
-                        "Päivitetty": itemDate.toLocaleDateString('fi-FI'),
-                        "Linkki": `https://www.lahella.fi/activities/${item._key}`
-                    });
-                }
+                });
 
                 renderTable();
                 offset += items.length;
                 
-                // Jos rajapinta sanoo ettei ole enempää TAI ollaan kahlattu yli 5000 ilmoituksen
-                if (json.hasMore !== true || offset >= 5000) {
+                // Jos rajapinta sanoo hasMore: false tai ollaan kahlattu jo 5000 läpi
+                if (json.hasMore === false || offset >= 5000) hasMore = false;
+                
+                // Jos viimeisin erä oli jo kokonaan vanhempaa kuin filterDate, voidaan lopettaa haku
+                const oldestInBatch = new Date(items[items.length - 1].updatedAt || items[items.length - 1].createdAt || 0);
+                if (oldestInBatch > 0 && oldestInBatch < filterDate) {
                     hasMore = false;
                 }
             }
-            status.innerText = `Haku valmis! Löytyi ${allData.length} ilmoitusta.`;
-            exportBtn.disabled = allData.length === 0;
+            status.innerText = `Haku valmis! Tarkistettiin ${totalProcessed} ilmoitusta, joista ${allData.length} täytti ehdot.`;
+            excelBtn.disabled = allData.length === 0;
         } catch (e) {
             status.innerText = "Virhe: " + e.message;
             console.error(e);
@@ -166,16 +168,17 @@
 
     function renderTable() {
         const body = document.getElementById('dataBody');
-        if (allData.length === 0) return;
+        if (allData.length === 0) {
+            body.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 20px;">Ei tuloksia valitulla suodatuksella.</td></tr>';
+            return;
+        }
         
         body.innerHTML = allData.map(d => `
             <tr>
                 <td><b>${d["Nimi"]}</b></td>
                 <td><code>${d["Järjestö-ID"]}</code></td>
-                <td>${d["Osallistumistapa"]}</td>
-                <td>${d["Postinumerot"]}</td>
+                <td>${d["Kategoria"]}</td>
                 <td>${d["Kaupunki"]}</td>
-                <td>${d["Päivitetty"]}</td>
                 <td><a href="${d["Linkki"]}" target="_blank">Avaa 🔗</a></td>
             </tr>
         `).join('');
@@ -184,7 +187,7 @@
     function exportToExcel() {
         const ws = XLSX.utils.json_to_sheet(allData);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Lähellä_Data");
+        XLSX.utils.book_append_sheet(wb, ws, "Tapahtumat");
         XLSX.writeFile(wb, `Lahella_haku_${new Date().toISOString().split('T')[0]}.xlsx`);
     }
 </script>
