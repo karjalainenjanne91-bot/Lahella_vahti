@@ -3,175 +3,165 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lähellä.fi - Tapahtumavahti PRO</title>
+    <title>Lähellä.fi - Tapahtumavahti V3</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
-        body { font-family: -apple-system, sans-serif; margin: 20px; background-color: #f8f9fa; }
+        body { font-family: sans-serif; margin: 20px; background-color: #f0f2f5; }
         .container { max-width: 1400px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        .controls { background: #e9ecef; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .status { width: 100%; font-weight: bold; color: #0056b3; margin-bottom: 10px; }
+        .controls { background: #fff; padding: 20px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .status { width: 100%; font-weight: bold; color: #d9534f; margin-bottom: 10px; padding: 10px; background: #f9f9f9; border-left: 5px solid #0056b3; color: #333; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th, td { border: 1px solid #dee2e6; padding: 10px; text-align: left; }
+        th, td { border: 1px solid #eee; padding: 12px; text-align: left; }
         th { background-color: #0056b3; color: white; position: sticky; top: 0; }
-        tr:hover { background-color: #f1f1f1; }
+        tr:nth-child(even) { background-color: #fcfcfc; }
         button { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
-        button.secondary { background: #007bff; }
+        button:disabled { background: #ccc; }
+        .btn-names { background: #f0ad4e; }
+        .btn-excel { background: #007bff; }
         select { padding: 10px; border-radius: 6px; border: 1px solid #ccc; }
-        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; display: inline-block; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>Lähellä.fi - Tapahtumavahti</h1>
+    <h1>Lähellä.fi - Tapahtumavahti V3</h1>
     
+    <div id="statusText" class="status">Valmis. Aloita painamalla "Päivitä ilmoitukset".</div>
+
     <div class="controls">
-        <div id="statusText" class="status">Valmis hakuun. Jos haku epäonnistuu, odota hetki ja yritä uudelleen.</div>
         <select id="typeFilter">
             <option value="support">Tuki ja apu</option>
             <option value="hobby">Harrastukset</option>
             <option value="voluntary">Vapaaehtoistoiminta</option>
         </select>
-        <button id="fetchBtn" onclick="startFetch()">Päivitä data</button>
-        <button class="secondary" id="exportBtn" onclick="exportToExcel()" disabled>Lataa Exceliin</button>
+        <button id="fetchBtn" onclick="fetchActivities()">1. Päivitä ilmoitukset</button>
+        <button id="namesBtn" class="btn-names" onclick="fetchGroupNames()" disabled>2. Hae järjestöjen nimet</button>
+        <button id="exportBtn" class="btn-excel" onclick="exportToExcel()" disabled>3. Lataa Exceliin</button>
     </div>
 
-    <div style="overflow-x: auto; max-height: 750px;">
+    <div style="overflow-x: auto; max-height: 600px; border: 1px solid #ddd;">
         <table id="dataTable">
             <thead>
                 <tr>
                     <th>Nimi</th>
-                    <th>Järjestäjä</th>
-                    <th>Osallistumistapa</th>
+                    <th>Järjestäjä (ID/Nimi)</th>
+                    <th>Tapa</th>
                     <th>Postinumerot</th>
                     <th>Kaupunki</th>
-                    <th>Teemat</th>
                     <th>Linkki</th>
                 </tr>
             </thead>
-            <tbody id="dataBody">
-                <tr><td colspan="7" style="text-align:center;">Ei dataa. Paina "Päivitä data" aloittaaksesi.</td></tr>
-            </tbody>
+            <tbody id="dataBody"></tbody>
         </table>
     </div>
 </div>
 
 <script>
     let allData = [];
-    let groupCache = {}; 
-    // Käytetään vakaata CORS-proxyä kiertämään selainrajoitukset
+    let groupCache = {};
     const PROXY = "https://corsproxy.io/?";
 
-    const channelTranslations = { "place": "Paikka", "phone": "Puhelin", "online": "Verkko" };
-
-    async function startFetch() {
+    async function fetchActivities() {
         const type = document.getElementById('typeFilter').value;
-        const statusText = document.getElementById('statusText');
-        const fetchBtn = document.getElementById('fetchBtn');
-        const dataBody = document.getElementById('dataBody');
+        const status = document.getElementById('statusText');
+        const btn = document.getElementById('fetchBtn');
         
         allData = [];
-        dataBody.innerHTML = "";
-        fetchBtn.disabled = true;
+        document.getElementById('dataBody').innerHTML = "";
+        btn.disabled = true;
         
         let offset = 0;
         let hasMore = true;
 
         try {
-            while (hasMore) {
-                statusText.innerHTML = `<span class="loader"></span> Haetaan ilmoituksia (Kohta: ${offset})...`;
-                
-                const apiUrl = `https://www.lahella.fi/v1/integration/activities?type=${type}&offset=${offset}`;
-                const response = await fetch(PROXY + encodeURIComponent(apiUrl));
-                
-                if (!response.ok) throw new Error("Yhteysvirhe rajapintaan.");
-                
-                const json = await response.json();
+            while (hasMore && offset < 5000) {
+                status.innerText = `Haetaan ilmoituksia... (Ladattu: ${offset})`;
+                const url = `https://www.lahella.fi/v1/integration/activities?type=${type}&offset=${offset}`;
+                const res = await fetch(PROXY + encodeURIComponent(url));
+                const json = await res.json();
                 const items = json.items || [];
 
-                for (let item of items) {
+                items.forEach(item => {
                     const traits = item.traits || {};
-                    const channels = traits.channels || [];
-                    
-                    let typesFound = new Set();
-                    let postalcodesFound = new Set();
-                    let citiesFound = new Set();
+                    let types = new Set();
+                    let codes = new Set();
+                    let cities = new Set();
 
-                    channels.forEach(ch => {
-                        if (ch.type && Array.isArray(ch.type)) {
-                            ch.type.forEach(t => typesFound.add(channelTranslations[t] || t));
-                        }
-                        if (ch.address) {
-                            if (ch.address.postalCode) postalcodesFound.add(ch.address.postalCode);
-                            if (ch.address.city) citiesFound.add(ch.address.city);
-                        }
+                    (traits.channels || []).forEach(ch => {
+                        if (ch.type) ch.type.forEach(t => types.add(t));
+                        if (ch.address?.postalCode) codes.add(ch.address.postalCode);
+                        if (ch.address?.city) cities.add(ch.address.city);
                     });
 
-                    const groupId = item.group;
-                    if (groupId && !groupCache[groupId]) {
-                        try {
-                            const gApiUrl = `https://www.lahella.fi/v1/integration/groups/${groupId}`;
-                            const gRes = await fetch(PROXY + encodeURIComponent(gApiUrl));
-                            const gJson = await gRes.json();
-                            groupCache[groupId] = gJson.name || "Nimetön";
-                        } catch (e) { 
-                            groupCache[groupId] = "Haku kesken..."; 
-                        }
-                    }
-
-                    const row = {
+                    allData.push({
                         "Nimi": traits.name || "Nimetön",
-                        "Järjestäjä": groupCache[groupId] || groupId,
-                        "Osallistumistapa": Array.from(typesFound).join(", "),
-                        "Postinumerot": Array.from(postalcodesFound).join(", "),
-                        "Kaupunki": Array.from(citiesFound).join(", "),
-                        "Teemat": (traits.theme || []).join(", "),
-                        "Linkki": `https://www.lahella.fi/activities/${item._key}`
-                    };
-                    
-                    allData.push(row);
-                    renderRow(row);
-                }
+                        "Järjestäjä": item.group, // Aluksi vain ID
+                        "Tapa": Array.from(types).join(", "),
+                        "Postinumerot": Array.from(codes).join(", "),
+                        "Kaupunki": Array.from(cities).join(", "),
+                        "Linkki": `https://www.lahella.fi/activities/${item._key}`,
+                        "groupId": item.group
+                    });
+                });
 
+                renderTable();
                 offset += items.length;
-                hasMore = json.hasMore === true && offset < 10000;
-                // Pidetään pieni tauko, ettei proxy tukkeudu
-                await new Promise(r => setTimeout(r, 100)); 
+                hasMore = json.hasMore === true && items.length > 0;
             }
-            statusText.innerText = `Haku valmis! Ladattu ${allData.length} riviä.`;
+            status.innerText = `Lataus valmis! Mukana ${allData.length} ilmoitusta. Voit nyt hakea nimet tai ladata Excelin.`;
+            document.getElementById('namesBtn').disabled = false;
             document.getElementById('exportBtn').disabled = false;
-        } catch (error) {
-            statusText.innerText = "Virhe: " + error.message + ". Yritä ladata sivu uudelleen.";
-            console.error(error);
-        } finally { fetchBtn.disabled = false; }
+        } catch (e) {
+            status.innerText = "Virhe: " + e.message + ". Kokeile päivittää sivu.";
+        } finally { btn.disabled = false; }
     }
 
-    function renderRow(row) {
-        const dataBody = document.getElementById('dataBody');
-        // Poistetaan "Ei dataa" -rivi ensimmäisellä kerralla
-        if (allData.length === 1) dataBody.innerHTML = "";
-        
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td><b>${row["Nimi"]}</b></td>
-            <td>${row["Järjestäjä"]}</td>
-            <td>${row["Osallistumistapa"]}</td>
-            <td>${row["Postinumerot"]}</td>
-            <td>${row["Kaupunki"]}</td>
-            <td><small>${row["Teemat"]}</small></td>
-            <td><a href="${row["Linkki"]}" target="_blank">🔗 Avaa</a></td>
-        `;
-        dataBody.appendChild(tr);
+    async function fetchGroupNames() {
+        const status = document.getElementById('statusText');
+        const btn = document.getElementById('namesBtn');
+        btn.disabled = true;
+
+        const uniqueGroups = [...new Set(allData.map(d => d.groupId))];
+        let count = 0;
+
+        for (let id of uniqueGroups) {
+            if (id && !groupCache[id]) {
+                try {
+                    status.innerText = `Haetaan nimiä... (${count++} / ${uniqueGroups.length})`;
+                    const url = `https://www.lahella.fi/v1/integration/groups/${id}`;
+                    const res = await fetch(PROXY + encodeURIComponent(url));
+                    const json = await res.json();
+                    groupCache[id] = json.name || id;
+                } catch (e) { groupCache[id] = id; }
+            }
+        }
+
+        allData.forEach(d => { if (groupCache[d.groupId]) d["Järjestäjä"] = groupCache[d.groupId]; });
+        renderTable();
+        status.innerText = "Nimet haettu onnistuneesti!";
+        btn.disabled = false;
+    }
+
+    function renderTable() {
+        const body = document.getElementById('dataBody');
+        body.innerHTML = allData.map(d => `
+            <tr>
+                <td><b>${d["Nimi"]}</b></td>
+                <td>${d["Järjestäjä"]}</td>
+                <td>${d["Tapa"]}</td>
+                <td>${d["Postinumerot"]}</td>
+                <td>${d["Kaupunki"]}</td>
+                <td><a href="${d["Linkki"]}" target="_blank">Avaa</a></td>
+            </tr>
+        `).join('');
     }
 
     function exportToExcel() {
         const ws = XLSX.utils.json_to_sheet(allData);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Datan_Analyysi");
-        XLSX.writeFile(wb, `Lahella_Data_${new Date().toISOString().slice(0,10)}.xlsx`);
+        XLSX.utils.book_append_sheet(wb, ws, "Data");
+        XLSX.writeFile(wb, "Lahella_Data.xlsx");
     }
 </script>
-
 </body>
 </html>
